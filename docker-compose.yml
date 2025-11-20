@@ -144,7 +144,7 @@ services:
       - "9083:9083"
     volumes:
       - ./infrastructure/hive/conf/hive-site.xml:/opt/hive/conf/hive-site.xml 
-      - ./hive/warehouse:/opt/hive/data/warehouse 
+      - ./src/processing/hive/warehouse:/opt/hive/data/warehouse 
     depends_on:
       - hive-metastore-postgresql
       - namenode 
@@ -160,9 +160,9 @@ services:
       - "10000:10000"
       - "10002:10002"
     volumes:
-      - ./hive/warehouse:/opt/hive/data/warehouse 
+      - ./src/processing/hive/warehouse:/opt/hive/data/warehouse 
       - ./infrastructure/hive/conf/hive-site.xml:/opt/hive/conf/hive-site.xml 
-      - ./hive/scripts:/opt/hive/scripts
+      - ./src/processing/hive/scripts:/opt/hive/scripts
       - ./data:/data
     depends_on:
       - hive-metastore
@@ -177,8 +177,7 @@ services:
       - "8080:8080"
       - "7077:7077"
     volumes:
-      # Mount code Spark và thư viện common
-      - ./processing/spark:/app/spark
+      - ./src/processing/spark:/app/spark
       - ./common:/app/common
       - ./data:/app/data
     environment:
@@ -205,8 +204,7 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
     volumes:
-      # Mount code Spark và thư viện common
-      - ./processing/spark:/app/spark
+      - ./src/processing/spark:/app/spark
       - ./common:/app/common
       - ./data:/app/data
     depends_on:
@@ -227,8 +225,7 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
     volumes:
-      # Mount code Spark và thư viện common
-      - ./processing/spark:/app/spark
+      - ./src/processing/spark:/app/spark
       - ./common:/app/common
       - ./data:/app/data
     depends_on:
@@ -314,10 +311,12 @@ services:
       - PYTHONPATH=/opt/airflow
     volumes:
       - ./airflow/dags:/opt/airflow/dags
-      - ./ingestion:/opt/airflow/ingestion
+      - ./src/ingestion:/opt/airflow/ingestion
+      - ./src/processing:/opt/airflow/processing
       - ./common:/opt/airflow/common
       - ./data:/data 
       - ./logs:/opt/airflow/logs 
+      - ./infrastructure/hive/conf/hive-site.xml:/opt/hive/conf/hive-site.xml 
     depends_on:
       - postgres
       - redis
@@ -329,16 +328,20 @@ services:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.airflow 
     hostname: airflow-scheduler
+    env_file:
+      - .env
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - PYTHONPATH=/opt/airflow
     volumes:
       - ./airflow/dags:/opt/airflow/dags
-      - ./ingestion:/opt/airflow/ingestion
+      - ./src/ingestion:/opt/airflow/ingestion
+      - ./src/processing:/opt/airflow/processing
       - ./common:/opt/airflow/common
       - ./data:/data 
       - ./logs:/opt/airflow/logs 
+      - ./infrastructure/hive/conf/hive-site.xml:/opt/hive/conf/hive-site.xml 
     depends_on:
       - postgres
       - redis

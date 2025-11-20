@@ -7,10 +7,7 @@ import requests
 import time
 import json
 
-load_dotenv()
-
-BASE_DIR = os.path.dirname(os.path.dirname((os.path.dirname(os.path.abspath(__file__)))))  # project root
-OUTPUT_DIR = os.path.join(BASE_DIR, "data", "raw")
+LOCAL_OUTPUT = '/data/raw'
 
 CITIES = [
     "New York,US", "Los Angeles,US", "Chicago,US", "Houston,US", 
@@ -19,8 +16,6 @@ CITIES = [
 ]
 
 STOCKS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NFLX", "NVDA"]
-
-NEWS_CATEGORIES = ["football", "bitcoin", "technology", "game", "music"]
 
 APIS = {
     "weather": {
@@ -39,23 +34,13 @@ APIS = {
         },
         "api_key_param": "apikey",
         "rate_limit": 5
-    },
-    "news": {
-        "url": "https://newsapi.org/v2/everything",
-        "params": {
-            "language": "en",
-            "page_size": 100,
-        },
-        "api_key_param": "apiKey",
-        "rate_limit": 50
     }
 }
 
 def get_api_key(service):
     key_map = {
         "weather": "OPENWEATHER_API_KEY",
-        "stocks": "ALPHA_VANTAGE_API_KEY",
-        "news": "NEWS_API_KEY"
+        "stocks": "ALPHA_VANTAGE_API_KEY"
     }
     
     if service not in key_map.keys():
@@ -118,7 +103,7 @@ def fetch_weather_data(**context):
     
     if weather_data:
         filepath = os.path.join(
-            OUTPUT_DIR, f"weather/weather_{context['ds']}.json"
+            LOCAL_OUTPUT, f"weather/weather_{context['ds']}.json"
         )
         os.makedirs(os.path.dirname(filepath), exist_ok=True) #Create directory if not exists before write file
         
@@ -185,7 +170,7 @@ def fetch_stock_data(**context):
     
     if stock_data:
         file_path = os.path.join(
-            OUTPUT_DIR, f"/stock/stock_{context['ds']}.json"
+            LOCAL_OUTPUT, f"stock/stock_{context['ds']}.json"
         )
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         
@@ -195,66 +180,6 @@ def fetch_stock_data(**context):
     
     return stock_data
 
-def fetch_news_data(**context):
-    logger.info("Fetching news data ...")
-
-    api_key = get_api_key("news")
-    
-    news_data = []
-    rate_limiter = RateLimiter(APIS.get("news").get("rate_limit"))
-    
-    for category in NEWS_CATEGORIES:
-        try:
-            rate_limiter.wait_if_needed()
-            
-            url = APIS.get("news").get("url")
-            params = {
-                "q": category,
-                "language": APIS.get("news").get("params").get("language"),
-                "pageSize": APIS.get("news").get("params").get("page_size"),
-                f"{APIS.get('news').get('api_key_param')}": api_key
-            }
-            
-            response = requests.get(url=url, params=params, timeout=30)
-            response.raise_for_status()
-            
-            data = response.json()
-            if data.get("status") == "ok":
-                articles = data.get("articles")
-                for article in articles:
-                    news_record = {
-                        "source_name": article.get("source", {}).get("name"),
-                        "author": article.get("author"),
-                        "title": article.get("title"),
-                        "description": article.get("description"),
-                        "url": article.get("url"),
-                        "url_to_image": article.get("urlToImage"),
-                        "published_at": article.get("publishedAt"),
-                        "content": article.get("content")
-                    }
-                    news_data.append(news_record)
-                    
-                logger.info(f"Fetched {len(articles)} articles for {category}") 
-            elif data.get("status") == "error":
-                logger.info(f"Request failed for {category}: {data.get('message')}")
-                continue
-        except Exception as e:
-            logger.error(f"Error fetching news data for {category}: {e}")
-            continue
-                
-    if news_data:
-        file_path = os.path.join(
-            OUTPUT_DIR,
-            f"news/news_{context['ds']}.json"
-        )     
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        
-        with open(file_path, "w") as f:
-            json.dump(news_data, f, indent=2)
-            logger.info(f"Saved {len(news_data)} news record to {file_path}")
-            
-    return news_data
-
 def validate_data(**context):
     validation_results = {
         'timestamp': datetime.now().isoformat(),
@@ -263,7 +188,7 @@ def validate_data(**context):
     }
     
     weather_file_path = os.path.join(
-        OUTPUT_DIR, f"weather/weather_{context['ds']}.json"
+        LOCAL_OUTPUT, f"weather/weather_{context['ds']}.json"
     )
     if os.path.exists(weather_file_path):
         with open(weather_file_path, 'r') as f:
@@ -283,7 +208,7 @@ def validate_data(**context):
         }
         
     stock_file_path = os.path.join(
-        OUTPUT_DIR, f"stock/stock_{context['ds']}.json"
+        LOCAL_OUTPUT, f"stock/stock_{context['ds']}.json"
     )
     if os.path.exists(stock_file_path):
         with open(stock_file_path, 'r') as f:
@@ -302,28 +227,8 @@ def validate_data(**context):
             'status': 'FAIL'
         }
         
-    news_file_path = os.path.join(
-        OUTPUT_DIR, f"news/news_{context['ds']}.json"
-    )
-    if os.path.exists(news_file_path):
-        with open(news_file_path, 'r') as f:
-            news_data = json.load(f)
-            
-        news_required = {'source_name', 'title', 'content'}
-        validation_results['results']['news'] = {
-            'file_exists': True,
-            'records_count': len(news_data),
-            'has_required_fields': all(news_required.issubset(record) for record in news_data[:10]),
-            'status': 'PASS' if len(news_data) > 0 else 'FAIL'
-        }
-    else:
-        validation_results['results']['news'] = {
-            'file_exists': False,
-            'status': 'FAIL'
-        }
-        
     validation_file_path = os.path.join(
-        OUTPUT_DIR, f"validation/validation_{context['ds']}"
+        LOCAL_OUTPUT, f"validation/validation_{context['ds']}"
     )
     os.makedirs(os.path.dirname(validation_file_path), exist_ok=True)
     

@@ -6,12 +6,8 @@ This project implements a production-grade, enterprise-level big data pipeline u
 ## Data Source
 - **Type**: Multi-source real-world data streams
 - **Sources**:
-  - Financial APIs: Yahoo Finance, Alpha Vantage, Coinbase Pro
-  - Weather APIs: OpenWeatherMap, WeatherAPI, NOAA
-  - Social Media: Twitter API, Reddit API (via Pushshift)
-  - IoT Simulation: Sensor data from simulated smart city infrastructure
-  - Government Data: US Census, Economic indicators
-  - News APIs: NewsAPI, Guardian API
+  - Financial APIs: Alpha Vantage
+  - Weather APIs: OpenWeatherMap
 - **Format**: JSON, CSV, Parquet, Avro, Protocol Buffers
 - **Volume**: 10M+ records daily across all sources
 - **Update Frequency**: Real-time streams + hourly/daily batch loads
@@ -20,8 +16,7 @@ This project implements a production-grade, enterprise-level big data pipeline u
 ## Tech Stack
 - **Storage**: Apache Hadoop HDFS 3.3.6 with tiered storage
 - **Data Warehouse**: Apache Hive 3.1.3 with ACID transactions
-- **ETL Processing**: Apache Pig 0.17.0, Apache Spark 3.5
-- **Data Integration**: Apache Sqoop 1.4.7, Apache NiFi 1.23
+- **ETL Processing**: Apache Spark 3.5
 - **Stream Processing**: Apache Kafka 2.8, Kafka Streams, Spark Streaming
 - **Workflow Orchestration**: Apache Airflow 2.7.1
 - **Database**: PostgreSQL 13 (metadata), Redis (caching)

@@ -17,10 +17,63 @@ RUN apt-get update && apt-get install -y \
     default-libmysqlclient-dev \
     unixodbc-dev \
     curl \
+    default-jdk \
+    wget \
+    gpg \
+    apt-transport-https \
     && rm -rf /var/lib/apt/lists/*
 
+# === CÀI ĐẶT JAVA 8 (TEMURIN) SONG SONG ===
+RUN set -ex; \
+    wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor | tee /usr/share/keyrings/adoptium.gpg > /dev/null; \
+    echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/adoptium.list; \
+    apt-get update; \
+    apt-get install -y temurin-8-jdk; \
+    apt-get clean
+    
+# ==== Thiết lập JAVA_HOME ====
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 
+ENV PATH=$JAVA_HOME/bin:$PATH
+
+# ==== Cài Hadoop ====
+ARG HADOOP_VERSION=3.3.6
+COPY hadoop-${HADOOP_VERSION}.tar.gz /tmp/hadoop.tar.gz
+RUN set -ex; \
+    tar -xzf /tmp/hadoop.tar.gz -C /opt/; \
+    rm /tmp/hadoop.tar.gz; \
+    ln -s /opt/hadoop-$HADOOP_VERSION /opt/hadoop; \
+    mkdir -p /opt/hadoop/etc/hadoop
+
+# ==== core-site.xml cho Hadoop ====
+RUN echo '<?xml version="1.0" encoding="UTF-8"?>' > /opt/hadoop/etc/hadoop/core-site.xml && \
+    echo '<configuration>' >> /opt/hadoop/etc/hadoop/core-site.xml && \
+    echo '  <property>' >> /opt/hadoop/etc/hadoop/core-site.xml && \
+    echo '    <name>fs.defaultFS</name>' >> /opt/hadoop/etc/hadoop/core-site.xml && \
+    echo '    <value>hdfs://namenode:9000</value>' >> /opt/hadoop/etc/hadoop/core-site.xml && \
+    echo '  </property>' >> /opt/hadoop/etc/hadoop/core-site.xml && \
+    echo '</configuration>' >> /opt/hadoop/etc/hadoop/core-site.xml
+
+# ==== Cài Spark ====
+ARG SPARK_VERSION=3.5.0
+COPY spark-${SPARK_VERSION}-bin-hadoop3.tgz /tmp/spark.tgz
+RUN set -ex; \
+    tar -xzf /tmp/spark.tgz -C /opt/; \
+    rm /tmp/spark.tgz; \
+    ln -s /opt/spark-$SPARK_VERSION-bin-hadoop3 /opt/spark
+
+# ==== Cài Hive ====
+ARG HIVE_VERSION=2.3.2
+COPY apache-hive-$HIVE_VERSION-bin.tar.gz /tmp/hive.tar.gz
+RUN set -ex; \
+    tar -xzf /tmp/hive.tar.gz -C /opt/; \
+    rm /tmp/hive.tar.gz; \
+    ln -s /opt/apache-hive-$HIVE_VERSION-bin /opt/hive; \
+    mkdir -p /opt/hive/conf
+
+# ==== Chuyển lại quyền cho airflow ====
 USER airflow
 
+# ==== Cài Python dependencies cho Airflow ====
 COPY infrastructure/docker/requirements_airflow.txt /requirements_airflow.txt
 
 RUN pip install --upgrade pip setuptools wheel && \
@@ -29,11 +82,22 @@ RUN pip install --upgrade pip setuptools wheel && \
         apache-airflow-providers-apache-hive==5.1.0 \
         apache-airflow-providers-apache-hdfs==4.3.0 \
         apache-airflow-providers-cncf-kubernetes \
-        pyspark==3.5.0
+        pyspark==3.5.0 && \
+    pip install --no-cache-dir -r /requirements_airflow.txt
 
-RUN pip install --no-cache-dir -r /requirements_airflow.txt
+# ==== Thiết lập biến môi trường ====
+ENV HADOOP_HOME=/opt/hadoop
+ENV HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
+ENV SPARK_HOME=/opt/spark
+ENV SPARK_CONF_DIR=/opt/spark/conf
+ENV HIVE_HOME=/opt/hive
+ENV HIVE_CONF_DIR=/opt/hive/conf
 
-ENV SPARK_HOME=/usr/local/spark
-ENV PATH=$SPARK_HOME/bin:$PATH
+# ==== Cấu hình PATH ====
+ENV PATH=$PATH:$HADOOP_HOME/bin:$SPARK_HOME/bin:$HIVE_HOME/bin:$HIVE_HOME/sbin
 
+# ==== Làm việc tại thư mục airflow ====
 WORKDIR /opt/airflow
+
+# ==== Quay lại user airflow ====
+USER airflow
