@@ -28,7 +28,7 @@ dag = DAG(
     tags = ['hadoop', 'hive', 'spark']
 )
 
-from ingestion.python_scripts.ingest_data import fetch_weather_data, fetch_stock_data, validate_data
+from ingestion.api.ingest_data import fetch_weather_data, fetch_stock_data, validate_data
 
 #Task definitions
 start_task = EmptyOperator(
@@ -80,6 +80,7 @@ create_hive_raw_tables_task = BashOperator(
     dag=dag
 )
 
+# Add new partition to metastore
 msc_repair_task = BashOperator(
     task_id='msc_repair_task',
     bash_command="""

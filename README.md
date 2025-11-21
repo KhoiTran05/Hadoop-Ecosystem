@@ -1,29 +1,37 @@
 # Hadoop Ecosystem Real Data Pipeline
 
 ## Project Description
-This project implements a production-grade, enterprise-level big data pipeline using Apache Hadoop ecosystem with real-world datasets from multiple external APIs and sources. The comprehensive solution integrates HDFS, Hive, Pig, Sqoop, Spark, Kafka, and Airflow to create a scalable data platform for real-time and batch analytics on financial, weather, social media, and IoT data.
+This project implements a big data pipeline designed to handle both real-time streaming and batch processing requirements for financial and weather data. The core of the system is Apache Kafka, serving as the central nervous system (Event Bus) that decouples data ingestion from processing.
+
+The solution integrates HDFS, Hive, Spark (Streaming & Batch), Kafka, and Airflow to create a robust platform for:
+
+- **Real-time**: Instant weather alerts and live stock market dashboards.
+- **Batch**: Historical analysis, complex ETL, and long-term data warehousing.
 
 ## Data Source
 - **Type**: Multi-source real-world data streams
 - **Sources**:
   - Financial APIs: Alpha Vantage
   - Weather APIs: OpenWeatherMap
-- **Format**: JSON, CSV, Parquet, Avro, Protocol Buffers
-- **Volume**: 10M+ records daily across all sources
-- **Update Frequency**: Real-time streams + hourly/daily batch loads
-- **Data Retention**: 5 years with automated archival
+- **Format**: JSON (Raw ingestion), Parquet (Storage), Avro (Schema Registry)
+- **Volume**: High-frequency polling for real-time layers
+- **Update Frequency**:
+  - **Real-time**: Every 5-60 seconds (Streaming)
+  - **Batch**: Hourly/Daily consolidation
+- **Data Retention**: 
+  - **Kafka**: 7 days (Buffer)
+  - **HDFS/Hive**: 5 years (Historical Source of Truth)
 
 ## Tech Stack
 - **Storage**: Apache Hadoop HDFS 3.3.6 with tiered storage
-- **Data Warehouse**: Apache Hive 3.1.3 with ACID transactions
-- **ETL Processing**: Apache Spark 3.5
-- **Stream Processing**: Apache Kafka 2.8, Kafka Streams, Spark Streaming
-- **Workflow Orchestration**: Apache Airflow 2.7.1
-- **Database**: PostgreSQL 13 (metadata), Redis (caching)
-- **Search & Analytics**: Apache Solr, Elasticsearch
-- **Monitoring**: Prometheus, Grafana, Apache Atlas
-- **Container**: Docker & Docker Compose with multi-stage builds
-- **Languages**: Java, Scala (Spark), Python, SQL, HiveQL, Pig Latin
+- **Data Warehouse**: Apache Hive 2.3.2 (Metastore on PostgreSQL)
+- **Event Backbone**: Apache Kafka 7.4.0 (KRaft/Zookeeper mode) + Schema Registry
+- **Processing Engine**: Spark 3.5.0 (Unified engine for both Batch & Structured Streaming)
+- **Orchestration**: Apache Airflow 2.8.4
+- **Real-time Store**: Redis 7 (Caching & Dashboard backend)
+- **Database**: PostgreSQL 13 (Metadata & Airflow backend)
+- **Monitoring**: Kafka UI, Spark UI, HDFS Web UI
+- **Container**: Docker & Docker Compose
 
 ## Project Purpose
 - Handle real-world data complexity and irregularities
@@ -33,6 +41,65 @@ This project implements a production-grade, enterprise-level big data pipeline u
 - Understand data quality and cleansing processes
 - Implement automated data pipeline orchestration
 
+## Architecture Diagram
+
+```mermaid
+    flowchart TD
+
+    API[External APIs] -->|Python Producer| Kafka[Apache Kafka & Schema Registry]
+
+    %% Streaming layer
+    Kafka -->|Stream Read| SparkStream[Spark Structured Streaming]
+    SparkStream -->|Aggregates| Redis[Redis Cache]
+    SparkStream -->|Critical Events| Alerts[Alert Service]
+    Redis --> Dashboard[Real-time Dashboard]
+
+    %% Batch layer
+    Kafka -->|Batch/Stream Sink| HDFS[HDFS Data Lake]
+    HDFS -->|Parquet Raw| SparkBatch[Spark Batch ETL]
+    SparkBatch -->|Cleaned Data| Hive[Hive Data Warehouse]
+    Hive --> Analytics[BI Reports]
+
+    %% Airflow
+    Airflow[Apache Airflow] -->|Orchestrate| API
+    Airflow -->|Trigger| SparkBatch
+```
+
+
+## Data Pipeline Stages
+
+### 1. Ingestion Layer (Producers)
+
+- **Tools**: Python, Kafka Producer API.
+
+- **Process**: Airflow triggers Python scripts to poll APIs. Data is serialized (JSON/Avro) and pushed immediately to Kafka Topics (weather_raw, stock_raw).
+
+- **Key Feature**: Decoupled ingestion. Producers don't write to HDFS directly.
+
+### 2. Speed Layer (Streaming)
+
+- **Tools**: Spark Structured Streaming, Redis.
+
+- **Process**: Spark jobs subscribe to Kafka topics.
+
+- **Alerting**: Detects extreme weather (>40°C) or stock crashes and triggers immediate alerts.
+
+- **Dashboarding**: Calculates moving averages (1-min window) and updates Redis.
+
+### 3. Batch Layer (Storage & ETL)
+
+- **Tools**: HDFS, Spark SQL, Hive.
+
+- **Step A (Archiving)**: Data from Kafka is ingested into HDFS (Parquet format) partitioned by year/month.
+
+- **Step B (Warehousing)**: Scheduled Airflow jobs trigger Spark to clean, transform, and load data into Hive tables for analytical querying.
+
+### 4. Serving Layer
+
+- **Tools**: Redis (Real-time), Hive (Batch), Presto/Trino (Optional).
+
+- **Output**: Low-latency dashboards and comprehensive analytical reports.
+
 ## Setup Instructions
 
 ### Prerequisites
@@ -41,180 +108,57 @@ This project implements a production-grade, enterprise-level big data pipeline u
 - API keys for data sources (instructions provided)
 - Java 8+ and Python 3.8+
 
-### API Keys Setup
+### Quick Start
 Create a `.env` file with your API keys:
 ```bash
-# Weather API (free tier available)
-OPENWEATHER_API_KEY=your_api_key_here
-
-# Alpha Vantage for stocks (free tier available)
-ALPHA_VANTAGE_API_KEY=your_api_key_here
-
-# Optional: Quandl API for financial data
-QUANDL_API_KEY=your_api_key_here
+OPENWEATHER_API_KEY=your_key
+ALPHA_VANTAGE_API_KEY=your_key
+AIRFLOW_UID=50000
 ```
 
-### Quick Start
+Launch the Stack:
 ```bash
-# Navigate to project directory
-cd hadoop-realdata-pipeline
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your API keys
-
-# Start the complete data stack
 docker-compose up -d
-
-# Wait for all services to be ready
-./scripts/wait-for-services.sh
-
-# Run initial data ingestion
-docker-compose exec airflow-scheduler python /scripts/ingest_all_data.py
-
-# Execute the data processing pipeline
-docker-compose exec spark-master bash /scripts/run_analysis.sh
-
-# View results and monitoring
-open http://localhost:9870  # HDFS Web UI
-open http://localhost:8080  # Spark Master UI
-open http://localhost:8081  # Airflow Web UI
 ```
 
-### Data Sources Configuration
-The pipeline automatically ingests data from:
-1. **Stock Market**: Daily OHLCV data for S&P 500 companies
-2. **Weather**: Hourly weather data for major US cities
-3. **Census**: Population and demographic data
-4. **Transportation**: NYC taxi trip records (sample)
+Services included: 
+- Hadoop (NN/DN), Hive, Spark, Kafka, Zookeeper, Schema Registry, Redis, Airflow (Web/Scheduler).
 
-## Architecture Diagram
-```
-[External APIs] → [Ingestion Layer] → [HDFS] → [Processing Layer] → [Analytics]
-      ↓               ↓                 ↓            ↓              ↓
-[Yahoo Finance]   [Python Scripts]  [Storage]   [Spark/MR]    [Dashboards]
-[OpenWeather]     [Apache Flume]    [Raw Data]  [Validation]   [Reports]
-[Census API]      [Airflow Jobs]    [Curated]   [Transform]    [Alerts]
-[NYC OpenData]    [Error Handling]  [Archive]   [Analytics]    [Export]
-```
-## Project Structure
-```
-/your-data-platform/
-├── .github/              # Hoặc .gitlab-ci.yml - CI/CD pipelines
-│   └── workflows/
-│       ├── build_spark.yml
-│       └── deploy_airflow.yml
-│
-├── airflow/              # (Orchestration)
-│   ├── dags/             # Nơi chứa các file Python định nghĩa DAGs
-│   │   ├── dag_ingest_yahoo_finance.py
-│   │   ├── dag_ingest_nyc_opendata.py
-│   │   └── dag_process_daily_reports.py
-│   ├── plugins/            # Các plugin custom cho Airflow
-│   ├── config/             # Cấu hình Airflow (nếu cần)
-│   └── scripts/            # Các shell scripts được gọi từ DAGs (nếu có)
-│
-├── common/               # Thư viện dùng chung
-│   ├── python/             # (Python package)
-│   │   ├── src/my_common_utils/
-│   │   │   ├── __init__.py
-│   │   │   ├── connectors.py (Kết nối DB, Kafka, HDFS)
-│   │   │   └── transformations.py (Hàm transform chung)
-│   │   └── setup.py
-│   ├── scala/              # (Scala/Java library)
-│   │   ├── src/main/scala/com/my_company/common/
-│   │   └── build.sbt (hoặc pom.xml)
-│   └── schemas/            # Định nghĩa schema (Avro, Parquet)
-│
-├── ingestion/            # (Ingestion Layer)
-│   ├── nifi_templates/     # Các template của NiFi (nếu quản lý bằng code)
-│   ├── sqoop_jobs/         # Các script .sh để chạy Sqoop import/export
-│   ├── python_scripts/     # Các script Python (vd: dùng API)
-│   │   ├── fetch_openweather.py
-│   │   └── fetch_census_api.py
-│   └── flume/              # Cấu hình Flume agents (nFume.conf)
-│
-├── processing/           # (Processing Layer - Core ETL/ELT)
-│   ├── spark/              # Các job Spark (Scala & Python)
-│   │   ├── src/main/scala/com/my_company/spark/
-│   │   │   ├── ValidationJob.scala
-│   │   │   └── AnalyticsJob.scala
-│   │   ├── src/main/python/
-│   │   │   ├── transform_users.py
-│   │   │   └── validation_rules.py
-│   │   ├── src/test/         # Unit tests cho Spark
-│   │   ├── build.sbt         # Build config cho Scala
-│   │   └── requirements.txt  # Dependencies cho PySpark
-│   └── hive/               # (Data Warehouse)
-│       ├── ddl/              # Data Definition Language
-│       │   ├── 01_create_raw_tables.hql
-│       │   ├── 02_create_curated_tables.hql
-│       │   └── 03_create_views.hql
-│       └── scripts/          # Các script HiveQL (chạy bởi Airflow)
-│
-├── streaming/            # (Stream Processing)
-│   ├── kafka_streams/      # (Nếu dùng Kafka Streams)
-│   │   ├── src/main/java/com/my_company/streams/
-│   │   └── pom.xml
-│   ├── spark_streaming/    # (Nếu dùng Spark Streaming)
-│   │   └── src/main/scala/com/my_company/streaming/
-│   └── producers/          # Các script producer (để test)
-│
-├── analytics/            # (Analytics Layer)
-│   ├── elasticsearch/      # Cấu hình cho Elasticsearch
-│   │   ├── mappings/
-│   │   └── ingest_pipelines/
-│   ├── solr/               # Cấu hình cho Solr
-│   │   └── configsets/
-│   └── dashboards/         # Export JSON của Grafana (để backup)
-│
-├── infrastructure/       # (Infra-as-Code & Monitoring)
-│   ├── docker/             # (Dockerfile cho các service)
-│   │   ├── base/           # (Base image)
-│   │   ├── spark/          # (Dockerfile cho Spark, cài dependencies)
-│   │   ├── airflow/        # (Dockerfile cho Airflow)
-│   │   └── nifi/
-│   ├── monitoring/
-│   │   ├── prometheus/
-│   │   │   ├── prometheus.yml
-│   │   │   └── rules/
-│   │   └── grafana/
-│   │       ├── provisioning/
-│   │       │   ├── datasources.yml
-│   │       │   └── dashboards.yml
-│   └── atlas/              # Cấu hình, definitions cho Apache Atlas
-│
-├── docs/                 # Tài liệu dự án
-│   ├── architecture.md
-│   ├── data_dictionary.md
-│   └── setup_guide.md
-│
-├── .gitignore
-├── docker-compose.yml    # File chính để chạy local dev environment
-├── README.md             # Tổng quan dự án, cách setup
-└── config/               # Cấu hình theo môi trường
-    ├── dev.env
-    ├── prod.env
-```
+Access Interfaces:
 
-## Data Pipeline Stages
-1. **Ingestion**: API calls with rate limiting and error handling
-2. **Validation**: Schema validation and data quality checks
-3. **Storage**: Raw data stored in HDFS with partitioning
-4. **Processing**: Spark jobs for data transformation and analytics
-5. **Quality**: Data profiling and anomaly detection
-6. **Output**: Processed data available for downstream consumption
+- **Airflow**: http://localhost:8083 (user/pass: airflow/airflow)
 
-## Performance Metrics
-- **Throughput**: 100K+ records per minute
-- **Latency**: End-to-end processing < 30 minutes
-- **Reliability**: 99.9% data ingestion success rate
-- **Storage**: Efficient compression achieving 70% space savings
+- **HDFS**: http://localhost:9870
+
+- **Spark Master**: http://localhost:8080
+
+- **Kafka UI**: http://localhost:8085
+
+- **Hive Server**: jdbc:hive2://localhost:10000
+
+Run the Pipeline:
+
+- Go to Airflow UI and trigger the DAG.
+
+Watch data flow into Kafka via Kafka UI.
+
+- Check HDFS for archived files.
+
+## Performance Metrics Goals
+
+- **Latency**: < 5 seconds for Real-time alerts.
+
+- **Throughput**: Capable of handling 10k+ events/second via Kafka.
+
+- **Reliability**: Zero data loss with Kafka replication (in Prod) and HDFS redundancy.
 
 ## Learning Outcomes
-- Real-world data engineering challenges
-- API integration and rate limiting strategies  
-- Large-scale data processing optimization
-- Data quality and validation techniques
-- Workflow orchestration and monitoring
-- Performance tuning for big data systems
+
+- Mastering Kafka as the central data hub.
+
+- Managing Schema Evolution with Schema Registry.
+
+- Writing Spark Structured Streaming applications with stateful aggregations.
+
+- Orchestrating complex dependencies with Airflow.
+

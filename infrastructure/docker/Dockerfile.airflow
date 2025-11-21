@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y \
     apt-transport-https \
     && rm -rf /var/lib/apt/lists/*
 
-# === CÀI ĐẶT JAVA 8 (TEMURIN) SONG SONG ===
+# === JAVA 8 (TEMURIN) ===
 RUN set -ex; \
     wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor | tee /usr/share/keyrings/adoptium.gpg > /dev/null; \
     echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/adoptium.list; \
@@ -31,11 +31,10 @@ RUN set -ex; \
     apt-get install -y temurin-8-jdk; \
     apt-get clean
     
-# ==== Thiết lập JAVA_HOME ====
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 
 ENV PATH=$JAVA_HOME/bin:$PATH
 
-# ==== Cài Hadoop ====
+# ==== Hadoop ====
 ARG HADOOP_VERSION=3.3.6
 COPY hadoop-${HADOOP_VERSION}.tar.gz /tmp/hadoop.tar.gz
 RUN set -ex; \
@@ -44,7 +43,7 @@ RUN set -ex; \
     ln -s /opt/hadoop-$HADOOP_VERSION /opt/hadoop; \
     mkdir -p /opt/hadoop/etc/hadoop
 
-# ==== core-site.xml cho Hadoop ====
+# ==== Hadoop core-site.xml ====
 RUN echo '<?xml version="1.0" encoding="UTF-8"?>' > /opt/hadoop/etc/hadoop/core-site.xml && \
     echo '<configuration>' >> /opt/hadoop/etc/hadoop/core-site.xml && \
     echo '  <property>' >> /opt/hadoop/etc/hadoop/core-site.xml && \
@@ -53,7 +52,7 @@ RUN echo '<?xml version="1.0" encoding="UTF-8"?>' > /opt/hadoop/etc/hadoop/core-
     echo '  </property>' >> /opt/hadoop/etc/hadoop/core-site.xml && \
     echo '</configuration>' >> /opt/hadoop/etc/hadoop/core-site.xml
 
-# ==== Cài Spark ====
+# ==== Spark ====
 ARG SPARK_VERSION=3.5.0
 COPY spark-${SPARK_VERSION}-bin-hadoop3.tgz /tmp/spark.tgz
 RUN set -ex; \
@@ -61,7 +60,14 @@ RUN set -ex; \
     rm /tmp/spark.tgz; \
     ln -s /opt/spark-$SPARK_VERSION-bin-hadoop3 /opt/spark
 
-# ==== Cài Hive ====
+# ==== KAFKA INTEGRATION FOR SPARK ====
+RUN cd /opt/spark/jars && \
+    wget https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.0/spark-sql-kafka-0-10_2.12-3.5.0.jar && \
+    wget https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/3.5.0/spark-token-provider-kafka-0-10_2.12-3.5.0.jar && \
+    wget https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar && \
+    wget https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.5.1/kafka-clients-3.5.1.jar
+
+# ==== Hive ====
 ARG HIVE_VERSION=2.3.2
 COPY apache-hive-$HIVE_VERSION-bin.tar.gz /tmp/hive.tar.gz
 RUN set -ex; \
@@ -70,10 +76,9 @@ RUN set -ex; \
     ln -s /opt/apache-hive-$HIVE_VERSION-bin /opt/hive; \
     mkdir -p /opt/hive/conf
 
-# ==== Chuyển lại quyền cho airflow ====
 USER airflow
 
-# ==== Cài Python dependencies cho Airflow ====
+# ==== Python dependencies for Airflow ====
 COPY infrastructure/docker/requirements_airflow.txt /requirements_airflow.txt
 
 RUN pip install --upgrade pip setuptools wheel && \
@@ -85,7 +90,6 @@ RUN pip install --upgrade pip setuptools wheel && \
         pyspark==3.5.0 && \
     pip install --no-cache-dir -r /requirements_airflow.txt
 
-# ==== Thiết lập biến môi trường ====
 ENV HADOOP_HOME=/opt/hadoop
 ENV HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
 ENV SPARK_HOME=/opt/spark
@@ -93,11 +97,8 @@ ENV SPARK_CONF_DIR=/opt/spark/conf
 ENV HIVE_HOME=/opt/hive
 ENV HIVE_CONF_DIR=/opt/hive/conf
 
-# ==== Cấu hình PATH ====
 ENV PATH=$PATH:$HADOOP_HOME/bin:$SPARK_HOME/bin:$HIVE_HOME/bin:$HIVE_HOME/sbin
 
-# ==== Làm việc tại thư mục airflow ====
 WORKDIR /opt/airflow
 
-# ==== Quay lại user airflow ====
 USER airflow

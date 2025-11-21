@@ -26,10 +26,40 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
     volumes:
       - kafka_data:/var/lib/kafka/data
     depends_on:
       - zookeeper
+  
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+      - zookeeper
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    hostname: kafka-ui
+    container_name: kafka-ui
+    ports:
+      - "8085:8080"
+    depends_on:
+      - kafka
+      - schema-registry
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
 
   redis:
     image: redis:7-alpine
@@ -231,7 +261,6 @@ services:
     depends_on:
       - spark-master
 
-  # Service để chạy Sqoop (đổi tên từ sqloop thành sqoop)
   # sqoop:
   #   build:
   #     context: .
@@ -250,7 +279,6 @@ services:
   #     - hive-metastore-db # Thêm dependency
   #   command: tail -f /dev/null # Giữ container chạy
 
-  # # Service để chạy Pig
   # pig:
   #   build:
   #     context: .
