@@ -1,21 +1,19 @@
 from common.python.logger_config import logger
 from common.python.api_rate_limiter import RateLimiter
 from datetime import datetime, timedelta
+from confluent_kafka import Producer
 from dotenv import load_dotenv
 import os
 import requests
 import time
 import json
 
-LOCAL_OUTPUT = '/data/raw'
+load_dotenv()
 
-CITIES = [
-    "New York,US", "Los Angeles,US", "Chicago,US", "Houston,US", 
-    "Phoenix,US", "Philadelphia,US", "San Antonio,US", "San Diego,US",
+WEATHER_CITIES = [
+    "New York,US", "Los Angeles,US", "Chicago,US", 
     "Ha Noi,VN", "Ho Chi Minh City, VN"
 ]
-
-STOCKS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NFLX", "NVDA"]
 
 APIS = {
     "weather": {
@@ -24,23 +22,20 @@ APIS = {
             "units": "metric"
         },
         "api_key_param": "appid",
-        "rate_limit": 60 # requests per minite
+        "rate_limit": 60 # requests per minute
     },
-    "stocks": {
-        "url": "https://www.alphavantage.co/query",
-        "params": {
-            "function": "TIME_SERIES_DAILY",
-            "symbol": []
-        },
-        "api_key_param": "apikey",
-        "rate_limit": 5
+    "football": {
+        "url": 'https://api.football-data.org/v4/competitions/PL/matches',
+        "headers" : "X-Auth-Token",
+        "rate_limit": 10
     }
 }
 
+#
 def get_api_key(service):
     key_map = {
         "weather": "OPENWEATHER_API_KEY",
-        "stocks": "ALPHA_VANTAGE_API_KEY"
+        "football": "FOOTBALL_DATA_API_KEY"
     }
     
     if service not in key_map.keys():
@@ -57,7 +52,8 @@ def get_api_key(service):
     
     return api_key
 
-def fetch_weather_data(**context):
+# Fetch weather
+def get_weather_data():
     logger.info("Fetching weather data ...")
     
     api_key = get_api_key("weather")
@@ -65,7 +61,7 @@ def fetch_weather_data(**context):
     rate_limiter = RateLimiter(APIS.get("weather").get("rate_limit"))
     weather_data = []
     
-    for city in CITIES:
+    for city in WEATHER_CITIES:
         try:
             rate_limiter.wait_if_needed()
             
@@ -91,7 +87,7 @@ def fetch_weather_data(**context):
                 "humidity": data.get("main", {}).get("humidity"),
                 "visibility": data.get("visibility"),
                 "wind_speed": data.get("wind", {}).get("speed"),
-                "timestamp": datetime.now().isoformat()
+                "fetched_timestamp": datetime.now().isoformat()
             }
             weather_data.append(weather_record)
             
@@ -101,144 +97,126 @@ def fetch_weather_data(**context):
             logger.error(f"Error fetching weather data for {city}: {e}")
             continue
     
-    if weather_data:
-        filepath = os.path.join(
-            LOCAL_OUTPUT, f"weather/weather_{context['ds']}.json"
-        )
-        os.makedirs(os.path.dirname(filepath), exist_ok=True) #Create directory if not exists before write file
-        
-        with open(filepath, mode="w") as f:
-            json.dump(weather_data, f, indent=2)
-            
-            logger.info(f"Saved {len(weather_data)} weather records to {filepath}")
-
+    logger.info(f"Successfully fetched f{len(weather_data)} weather records")
+    validate_data('weather', weather_data, {'city', 'country', 'temperature', 'pressure', 'humidity', 'visibility', 'fetched_timestamp'})
+    
     return weather_data
 
-# "stocks": {
-#         "url": "https://www.alphavantage.co/query",
-#         "params": {
-#             "function": "TIME_SERIES_DAILY",
-#             "symbol": []
-#         },
-#         "api_key_param": "apikey"
-#     }
-def fetch_stock_data(**context):
-    logger.info("Fetching stock data ...")
+# Fetch live and upcoming football matches
+def get_live_football_data():
+    logger.info("Fetching live football data ...")
     
-    api_key = get_api_key("stocks")
+    # rate_limiter = RateLimiter(APIS.get("football").get("rate_limit"))
+    # rate_limiter.wait_if_needed()
     
-    rate_limiter = RateLimiter(APIS.get("stocks").get("rate_limit"))
-    stock_data = []
-    
-    for symbol in STOCKS:
-        try:
-            rate_limiter.wait_if_needed()
-            
-            url = APIS.get("stocks").get("url")
-            params = {
-                "function": APIS.get("stocks").get("params").get("function"),
-                "symbol": symbol,
-            f"{APIS.get('stocks').get('api_key_param')}": api_key
-            }
-            response = requests.get(url=url, params=params, timeout=30)
-            response.raise_for_status()
-            
-            data = response.json()
-            if "Time Series (Daily)" in data:
-                time_series = data["Time Series (Daily)"]
-                for date, value in time_series.items():
-                    stock_record = {
-                        "symbol": symbol,
-                        "date": date,
-                        "open": float(value.get("1. open")),
-                        "high": float(value.get("2. high")),
-                        "low": float(value.get("3. low")), 
-                        "close": float(value.get("4. close")),
-                        "volume": int(value.get("5. volume")),
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    stock_data.append(stock_record)
-
-            elif "Information" in data:
-                logger.info(f"{data['Information']}")
-                continue
-            
-            logger.info(f"Fetched stock data for {symbol}")
-        except Exception as e:
-            logger.error(f"Error fetching stock data for {symbol}: {e}")
-            continue
-    
-    if stock_data:
-        file_path = os.path.join(
-            LOCAL_OUTPUT, f"stock/stock_{context['ds']}.json"
-        )
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        
-        with open(file=file_path, mode='w') as f:
-            json.dump(stock_data, f, indent=2)
-            logger.info(f"Saved {len(stock_data)} stock records to {file_path}")
-    
-    return stock_data
-
-def validate_data(**context):
-    validation_results = {
-        'timestamp': datetime.now().isoformat(),
-        'validation_date': context['ds'],
-        'results': {}
+    url = APIS.get("football").get("url")
+    headers = {
+        APIS.get("football").get("headers"): get_api_key("football")
     }
     
-    weather_file_path = os.path.join(
-        LOCAL_OUTPUT, f"weather/weather_{context['ds']}.json"
-    )
-    if os.path.exists(weather_file_path):
-        with open(weather_file_path, 'r') as f:
-            weather_data = json.load(f)
-            
-        weather_required = {'city', 'temperature', 'pressure', 'humidity'}
-        validation_results['results']['weather'] = {
-            'file_exists': True,
-            'records_count': len(weather_data),
-            'has_required_fields': all(weather_required.issubset(record) for record in weather_data[:10]),
-            'status': 'PASS' if len(weather_data) > 0 else 'FAIL'
-        }
-    else:
-        validation_results['results']['weather'] = {
-            'file_exists': False,
-            'status': 'FAIL'
+    date_from = str(datetime.now().date())
+    date_to = str((datetime.now() + timedelta(days=1)).date())
+    
+    live_data = []
+    try:
+        params = {
+            "dateFrom": date_from,
+            "dateTo": date_to
         }
         
-    stock_file_path = os.path.join(
-        LOCAL_OUTPUT, f"stock/stock_{context['ds']}.json"
-    )
-    if os.path.exists(stock_file_path):
-        with open(stock_file_path, 'r') as f:
-            stock_data = json.load(f)
-            
-        stock_required = {'symbol', 'open', 'high', 'low', 'close'}
-        validation_results['results']['stock'] = {
-            'file_exists': True,
-            'records_count': len(stock_data),
-            'has_required_fields': all(stock_required.issubset(record) for record in stock_data[:10]),
-            'status': 'PASS' if len(stock_data) > 0 else 'FAIL'
-        }
-    else:
-        validation_results['results']['stock'] = {
-            'file_exists': False,
-            'status': 'FAIL'
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        all_matches = data.get("matches", [])
+        
+        fetch_timestamp = datetime.now().isoformat()
+        for match in all_matches:
+            match['fetched_timestamp'] = fetch_timestamp
+            match_status = match.get("status")
+            if match_status in ["LIVE", "IN_PLAY", "PAUSED", "SCHEDULED", "TIMED"]:
+                live_data.append(match)
+        
+        logger.info(f"Successfully fetched: {len(live_data)} live and upcoming matches")
+        validate_data('live_football', live_data,  {"id", "utcDate", "homeTeam", "awayTeam", "score", "fetched_timestamp"})
+        
+        return live_data
+    
+    except requests.RequestException as e:
+        logger.error(f"Error fetching football data: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error processing football data: {e}")
+        return None
+
+# Fetch 30 days football matches n (Batch)
+def get_historical_football_data(days_ago=30):
+    logger.info("Fetching 30 days historical football data ...")
+    
+    # rate_limiter = RateLimiter(APIS.get("football").get("rate_limit"))
+    # rate_limiter.wait_if_needed()
+    
+    url = APIS.get("football").get("url")
+    headers = {
+        APIS.get("football").get("headers"): get_api_key("football")
+    }
+    
+    date_from = str((datetime.now() - timedelta(days=days_ago)).date()) 
+    date_to = str(datetime.now().date())
+
+    try:
+        params = {
+            "dateFrom": date_from,
+            "dateTo": date_to,
+            "status": '"FINISHED'
         }
         
-    validation_file_path = os.path.join(
-        LOCAL_OUTPUT, f"validation/validation_{context['ds']}"
-    )
-    os.makedirs(os.path.dirname(validation_file_path), exist_ok=True)
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        historical_matches = data.get("matches", [])
+        fetch_timestamp = datetime.now().isoformat()
+        
+        logger.info(f"AIRFLOW BATCH: Successfully fetched {len(historical_matches)} historical matches.")
+        for match in historical_matches:
+            match['fetched_timestamp'] = fetch_timestamp
+            
+        return historical_matches
     
-    with open(validation_file_path, 'w') as validation_file:
-        json.dump(validation_results, validation_file, indent=2)
+    except requests.RequestException as e:
+        logger.error(f"AIRFLOW BATCH ERROR: Failed to fetch historical data: {e}")
+        return 0
+    except Exception as e:
+        logger.error(f"AIRFLOW BATCH ERROR: An unexpected error occurred: {e}")
+        return 0
     
-    logger.info(f"Data validation completed: {validation_results}")   
     
-    failed_validation = [k for k,v in validation_results['results'].items() if v['status'] == 'FAIL'] 
+# Data validation
+def validate_data(data_name, data, required_fields=[]):
+    validation_results = {
+        'timestamp': datetime.now().isoformat(),
+    }
+    
+    if data_name == 'live_football':
+        validation_results['results'] = {
+            'data_name': data_name,
+            'records_count': len(data),
+            'has_required_fields': all(required_fields.issubset(record) for record in data),
+            'status': 'PASS' if len(data) >= 0 else 'FAIL'
+        }
+    else:  
+        validation_results['results'] = {
+            'data_name': data_name,
+            'records_count': len(data),
+            'has_required_fields': all(required_fields.issubset(record) for record in data),
+            'status': 'PASS' if len(data) > 0 else 'FAIL'
+        }
+    
+    logger.info(f"Data validation completed for {data_name}: {validation_results}")   
+    
+    failed_validation = [k for k,v in validation_results['results'].items() if v['status'] == 'FAIL' or v['has_required_fields'] == False] 
     if failed_validation:
-        raise ValueError(f"Data validation failed for: {failed_validation}")
+        raise ValueError(f"Data validation failed for {data_name}: {failed_validation}")
     
     return validation_results
