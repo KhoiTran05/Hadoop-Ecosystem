@@ -50,8 +50,7 @@ class DataIngestionPipeline:
     def create_kafka_producer(self, producer_name):
         """
         Create Kafka SerializingProducer with AvroSerializer for value
-        
-        Parameters:
+        Args:
             producer_name (str): Kafka producer name. Must be either 'football' or 'weather'
                 
         Returns
@@ -94,8 +93,7 @@ class DataIngestionPipeline:
     def delivery_report(self, err, msg):
         """
         Callback to report the delivery status of a Kafka message
-        
-        Parameters:
+        Args:
             err (KafkaError or None): Error info if delivery failed or None if successful
             msg (Message): Kafka message object
         
@@ -111,8 +109,7 @@ class DataIngestionPipeline:
     def produce_to_kakfa(self, producer, topic, key, value):
         """
         Produce a message to Kafka topic
-        
-        Parameters:
+        Args:
             producer (SerializingProducer): Kafka producer instance 
             topic (str): Kafka topic to which message will be sent
             key (int): Kafka message key
@@ -174,6 +171,7 @@ class DataIngestionPipeline:
                         "humidity": data.get("main", {}).get("humidity"),
                         "visibility": data.get("visibility"),
                         "wind_speed": data.get("wind", {}).get("speed"),
+                        "dt": data.get("dt"),
                         "ingested_at": datetime.now().isoformat()
                     }
                     weather_data.append(weather_record)
