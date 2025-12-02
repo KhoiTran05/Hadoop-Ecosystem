@@ -16,7 +16,7 @@ START_TIME = dt_time(0, 0, 0)
 END_TIME = dt_time(14, 0, 0) 
 
 # Interval between API calls
-WEATHER_INTERVAL_SECONDS = 5 * 60  
+WEATHER_INTERVAL_SECONDS = 60  
 FOOTBALL_API_INTERVAL_SECONDS = 30
 
 LIVE_FOOTBALL_TOPIC = "football_live"
@@ -253,6 +253,8 @@ class DataIngestionPipeline:
     
     def run_ingestion(self):
         """Continuously fetch football and weather data and produce messages to Kafka topics on a schedule"""
+        time.sleep(60)
+        
         football_last_run = datetime.min.replace(tzinfo=timezone.utc)
         weather_last_run = datetime.min.replace(tzinfo=timezone.utc)
         

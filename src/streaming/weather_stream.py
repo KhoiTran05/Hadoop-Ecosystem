@@ -1,6 +1,6 @@
 import sys
 import os
-import datetime
+import redis
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
@@ -64,7 +64,8 @@ class WeatherStreamProcessor:
     
     def write_stream_to_console(self, df, output_mode, checkpoint_location):
         try:
-            logger.info("Start writting stream to console ...")
+            logger.info("Start writing stream to console ...")
+            
             query = df.writeStream \
                 .outputMode(output_mode) \
                 .format("console") \
@@ -73,13 +74,33 @@ class WeatherStreamProcessor:
                 .start()
                 
             query.awaitTermination()
+            
         except KeyboardInterrupt:
             logger.info("Streaming stopped by user")
             
             query.stop() 
             logger.info("Streaming query stopped successfully.")
+        except Exception as e:
+            logger.error("Failed to write stream to console")
     
-    
+    def write_to_alert_topic(self, df, topic, checkpoint_location):           
+        try:
+            logger.info(f"Start writing stream to '{topic}' topic ...")
+            
+            query = df \
+                .selectExpr("to_json(struct(*)) AS value") \
+                .writeStream \
+                .format("kafka") \
+                .option("kafka.bootstrap.servers", "localhost:9092") \
+                .option("topic", topic) \
+                .option("checkpointLocation", f"./checkpoints/weather/{checkpoint_location}") \
+                .start()
+                
+            query.awaitTermination()
+            
+        except Exception as e:
+            logger.error(f"Failed to write to '{topic}' topic")
+            
     def threshold_based_anomaly_detect(self, df):
         """
         Detect weather anomalies using threshold
@@ -89,11 +110,11 @@ class WeatherStreamProcessor:
         Returns:
             DataFrame: Dataframe with anomaly features
         """
-        df = df.withWatermark("event_timestamp", "2 minutes")
         
         anomaly = df \
             .select(
                 "event_timestamp",
+                lit("threshold").alias("alert_type"),
                 "id",
                 "city",
                 "country",
@@ -103,7 +124,7 @@ class WeatherStreamProcessor:
                 "pressure",
                 "humidity",
                 "visibility",
-                "wind_spped"
+                "wind_speed"
             ) \
             .withColumn("temp_anomaly", expr("CASE WHEN temperature <= 0 OR temperature >= 38 THEN True ELSE False END")) \
             .withColumn("pressure_anomaly", expr("CASE WHEN pressure <= 995 OR pressure >= 1033 THEN True ELSE False END")) \
@@ -131,29 +152,42 @@ class WeatherStreamProcessor:
         df = df.withWatermark("event_timestamp", "2 minutes")
         
         agg_df = df \
-                .groupBy(
+            .groupBy(
                 "city",
+                "country",
                 window("event_timestamp", "30 minutes", "5 minutes").alias("time_window")
             ) \
             .agg(
-                avg("temperature").alias("avg_temp"), max("temperature").alias("max_temp"), min("temperature").alias("min_temp"),
-                avg("pressure").alias("avg_pressure"), max("pressure").alias("max_pressure"), min("pressure").alias("min_pressure"),
-                avg("wind_speed").alias("avg_wind_speed"), max("wind_speed").alias("max_wind"), min("wind_speed").alias("min_wind"), 
-                avg("humidity").alias("avg_humidity"), max("humidity").alias("max_humidity"), min("humidity").alias("min_humidity"),
-                avg("visibility").alias("avg_vis"), min("visibility").alias("min_vis")
+                avg("temperature").alias("avg_temp"),
+                max(struct("temperature", "event_timestamp")).alias("max_temp_info"), 
+                min(struct("temperature", "event_timestamp")).alias("min_temp_info"),
+                
+                avg("pressure").alias("avg_pressure"),
+                max(struct("pressure", "event_timestamp")).alias("max_pressure_info"), 
+                min(struct("pressure", "event_timestamp")).alias("min_pressure_info"),
+            
+                avg("wind_speed").alias("avg_wind_speed"), 
+                max(struct("wind_speed", "event_timestamp")).alias("max_wind_info"), 
+                min("wind_speed").alias("min_wind"), 
+                
+                avg("humidity").alias("avg_humidity"), 
+                max(struct("humidity", "event_timestamp")).alias("max_humidity_info"), 
+                min("humidity").alias("min_humidity"),
+                
+                avg("visibility").alias("avg_vis"),
+                min(struct("visibility", "event_timestamp")).alias("min_vis_info")
             ) 
             
         analysis = agg_df \
-            .withColumn("temp_rise", col("max_temp") - col("avg_temp")) \
-            .withColumn("temp_fall", col("avg_temp") - col("min_temp")) \
-            .withColumn("pressure_drop", col("max_pressure") - col("min_pressure")) \
-            .withColumn("wind_rise", col("max_wind") - col("min_wind")) \
-            .withColumn("humidity_rise", col("max_humidity") - col("min_humidity")) 
+            .withColumn("temp_rise", col("max_temp_info.temperature") - col("avg_temp")) \
+            .withColumn("temp_fall", col("avg_temp") - col("min_temp_info.temperature")) \
+            .withColumn("pressure_drop", col("max_pressure_info.pressure") - col("min_pressure_info.pressure")) \
+            .withColumn("wind_rise", col("max_wind_info.wind_speed") - col("min_wind")) \
+            .withColumn("humidity_rise", col("max_humidity_info.humidity") - col("min_humidity"))
             
         anomaly = analysis \
             .withColumn("temp_change_anomaly", when(col("temp_rise") >= 3, "rise rapidly")
                                     .when(col("temp_fall") >= 3, "fall rapidly")
-                                    .when(col("min_temp") < 0, "below zero")
                                     .otherwise(None)) \
             .withColumn("pressure_change_anomaly", when(col("pressure_drop") >= 2, "drop/unstable") 
                                         .otherwise(None)) \
@@ -165,7 +199,7 @@ class WeatherStreamProcessor:
             .withColumn("visibility_change_anomaly", when((col("avg_vis") > 5000) & (col("min_vis") < 2000), "drop/unstable")
                                             .otherwise(None))
             
-        result = anomaly.filter(
+        filtered = anomaly.filter(
             col("temp_change_anomaly").isNotNull() |
             col("pressure_change_anomaly").isNotNull() |
             col("wind_change_anomaly").isNotNull() |
@@ -173,19 +207,55 @@ class WeatherStreamProcessor:
             col("visibility_change_anomaly").isNotNull()
         )
         
+        result = filtered.select(
+            lit("change").alias("alert_type"),
+            col("city"),
+            col("country"),
+            col("time_window.start").alias("window_start"), 
+            
+            col("max_temp_info.temperature").alias("max_temp"),
+            col("max_temp_info.event_timestamp").alias("max_temp_time"), 
+            col("min_temp_info.temperature").alias("min_temp"),
+            col("min_temp_info.event_timestamp").alias("min_temp_time"),
+            col("temp_rise"),
+            col("temp_fall"),
+            col("temp_change_anomaly"),
+            
+            col("max_wind_info.wind_speed").alias("max_wind"),
+            col("max_wind_info.event_timestamp").alias("max_wind_time"),
+            col("wind_rise"),
+            col("wind_change_anomaly"),
+            
+            col("min_pressure_info.pressure").alias("min_pressure"),
+            col("min_pressure_info.event_timestamp").alias("min_pressure_time"),
+            col("pressure_drop"),
+            col("pressure_change_anomaly"),
+            
+            col("max_humidity_info.humidity").alias("max_humidity"),
+            col("max_humidity_info.event_timestamp").alias("max_humid_time"),
+            col("humidity_rise"),
+            col("humidity_change_anomaly"),
+
+            col("min_vis_info.visibility").alias("min_visibility"),
+            col("min_vis_info.event_timestamp").alias("min_visibility_time"),
+            col("visibility_change_anomaly")
+        )
+        
         return result
     
     
     def start_weather_stream_pipeline(self):
+        logger.info("Start weather streaming pipeline ...")
+        
         topic = 'weather'
         schema = self.get_schema(topic)
         df_raw = self.read_kafka_stream(topic, schema)
         
         threshold_detect_df = self.threshold_based_anomaly_detect(df_raw)
-        self.write_stream_to_console(threshold_detect_df, "append", "threshold_detect")
+        self.write_to_alert_topic(threshold_detect_df, 'weather-alert', 'threshold_detect')
         
         change_detect_df = self.change_anomaly_detect(df_raw)
-        self.write_stream_to_console(change_detect_df, "update", "change_detect")
+        self.write_to_alert_topic(change_detect_df, 'weather-alert', 'change_detect')
 
 def main():
     processor = WeatherStreamProcessor()
